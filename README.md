@@ -1,7 +1,6 @@
 - 👋 Hi, I’m @timneumann1
 - 👀 I’m interested in Data Science.
-- 🌱 I’m currently learning Cryptography and R.
-- 💞️ I’m looking to collaborate on Data Science Projects.
+- 🌱 I’m currently learning Cryptography and R and looking to collaborate on Data Science Projects.
 - 📫 How to reach me: On LinkedIn via www.linkedin.com/in/timneumann01
 
 
