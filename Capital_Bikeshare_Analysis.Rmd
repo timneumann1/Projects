@@ -1,0 +1,964 @@
+---
+title: 'Introduction to Data Science: Final Project - Analysis of Capital Bikeshare
+  ridership data from 2011 to 2021 – Tim Neumann'
+output: html_notebook
+---
+
+# Introduction 
+The bikeshare service Capital Bikeshare provides its users with an option to share bicycles in the nation’s capital to commute to work or explore the city. Currently, the company offers “more than 5000 bikes at 600 stations” (https://www.capitalbikeshare.com/about) in the DMV area to rent bikes through different pay-as-you go or membership plans. While promoting the usage of bikes, the idea behind this is to establish a sharing community in which everyone can rent a bike for an accessible price. In order to do so, Capital Bikeshare has to plan its supply of bikes and bike docks (stations at which bikes can be unlocked and returned) as well as the geographic location of those sites. An examination of which factors are significant predictors of the usage of the service can be valuable for planning purposes in order to increase customer satisfaction. 
+This project sets out to find patterns in the data to identify relationships between the usage of the bikeshare service and variables such as the month/season, membership type of the rider, weather conditions on a given day or holidays. A further objective of the analysis is to identify stations and routes that are more frequently used than others. This shall serve to answer which variables determine the number of bike rides by finding trends in the data that show correlations with of variable? 
+
+# Data Collection
+
+First we install the necessary packages.
+
+```{r, results='hide',fig.keep='all'}
+install.packages("tidyverse")
+install.packages("lubridate")
+install.packages("ggplot2")
+install.packages("corrplot")
+install.packages("estimatr")
+install.packages("patchwork")
+install.packages("gridGraphics")
+install.packages("ggmap")
+install.packages("patchwork")
+
+library(gridGraphics)
+library(patchwork)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(Hmisc)
+library(corrplot)
+library(estimatr)
+library(ggmap)
+library(patchwork)
+```
+
+The first step in the analysis is acquiring the relevant data. We have different data sources that need to be accessed and investigated.
+1.	 Every ride started through the Capital Bikeshare app creates datapoints about the start and end station, time, membership plan etc. For the last ten years, this data can be accessed freely at https://www.capitalbikeshare.com/system-data, with a documentation at https://github.com/NABSA/gbfs/blob/master/gbfs.md. In recent years, the company has published quarterly reports, such that it is possible to differentiate between different times of the year conveniently. 
+2.	To add data regarding weather conditions, we download historical weather data for the respective time frame from Iowa State University’s Environmental Mesonet at https://mesonet.agron.iastate.edu/request/download.phtml?network=VA_ASOS (the handbook can be found at https://www.weather.gov/media/asos/aum-toc.pdf).
+3.	A third dataset containing the U.S. holidays can be accessed at https://www.kaggle.com/donnetew/us-holiday-dates-2004-2021?select=US+Holiday+Dates+%282004-2021%29.csv, where it is used in the context of a Kaggle competition
+
+To access the data, a web-scraping process is employed to download the .zip files to a local directory. Then the files are unzipped and loaded into a data frame in R (The file 2019-07 is not read properly as a .cvs file and needs manual care.) We also see that data for April 2020 is missing and that the files from Mai 2020 (#53) on contain 13 instead of 9 variables. Overall, we will contemplate historical Capital Bikeshare data from 2010 until 2021. To clean and join the data, the datasets that are different from the most recent ones are recoded to match correspinding variables. The size of the final dataset will be quite large: more than 40 million rows, as every bike ride gets stored individually. Thus, the script is executed on a 64GB RAM iMac. 
+
+## capital_bikeshare
+
+```{r}
+file_names = c("2010","2011","2012","2013","2014","2015","2016","2017","201801","201802","201803","201804","201805","201806","201807","201808","201809","201810","201811","201812","201901","201902","201903","201904","201905","201906","201907","201908","201909","201910","201911","201912","202001","202002","202003","202005","202006","202007","202008","202009","202010","202011","202012","202101","202102","202103","202104","202105","202106","202107","202108","202109","202110")
+
+directory = "/Users/tim_neumann/Desktop/Capital_Bikeshare"
+url_paths = c()
+dest_files = c()
+
+for (i in c(1:length(file_names))){
+  url_paths[i] = paste("https://s3.amazonaws.com/capitalbikeshare-data/",file_names[i],'-capitalbikeshare-tripdata.zip',sep="")
+  dest_files[i] = paste(directory,file_names[i],'.zip',sep="")
+  download.file(url_paths[i],dest_files[i])
+  unzip(dest_files[i],exdir=directory)
+}
+csv_files = list.files(directory,pattern = "*.csv")
+csv_files_path = c()
+for (i in 1:length(csv_files)){
+  csv_files_path[i] = paste(directory,csv_files[i],sep = "")
+}
+```
+
+We then read the data into two files and clean them separately.
+
+```{r, results='hide',fig.keep='all'}
+cabi1 = read_csv(csv_files_path[1:53])
+cabi2 = read_csv(csv_files_path[54:length(csv_files_path)])
+```
+
+
+```{r, results='hide',fig.keep='all'}
+cabi1 = cabi1 %>%
+  select(`Start date`,`End date`,Duration,`Start station number`,`Start station`,`End station number`,`End station`,`Member type`) 
+
+cabi1$`Start station number` = as.numeric(cabi1$`Start station number`)
+cabi1$`End station number` = as.numeric(cabi1$`End station number`)
+
+cabi1 = cabi1 %>%
+  select(`Start date`,`End date`,Duration,`Start station number`,`Start station`,`End station number`,`End station`,`Member type`) 
+
+cabi2 = cabi2 %>% mutate(
+  Duration = ended_at - started_at,
+  "Member type"= recode(member_casual,
+                        `casual`="Casual",
+                        `member`="Member"))
+
+cabi2 = cabi2 %>%
+  rename("Start date" = "started_at",
+         "End date" = "ended_at",
+         "Start station number" = "start_station_id",
+         "Start station" = "start_station_name",
+         "End station number" = "end_station_id",
+         "End station" = "end_station_name",
+         "Bike type" = "rideable_type",
+         "Start latitude"="start_lat",
+         "Start longitude"="start_lng",
+         "End latitude"="end_lat",
+         "End longitude"="end_lng")
+
+cabi2 = cabi2 %>%
+  select(`Start date`,`End date`,Duration,`Start station number`,`Start station`,`End station number`,`End station`,`Member type`,`Bike type`,`Start latitude`,`Start longitude`,`End latitude`,`End longitude`) 
+
+cabi2$Duration = as.numeric(gsub(cabi2$Duration,pattern = 'secs', replacement = ''))
+```
+
+Now we join the datasets and create user-friendly data entries.
+
+```{r, results='hide',fig.keep='all'}
+capital_bikeshare = full_join(cabi1,cabi2) 
+
+capital_bikeshare = capital_bikeshare %>%
+  mutate(Year = year(`Start date`),
+         Month = month(`Start date`),
+         Season = case_when((Month > 0) & (Month < 4) ~ "Spring",
+                            (Month > 3) & (Month < 7) ~ "Summer",
+                            (Month > 6) & (Month < 10) ~ "Fall",
+                            (Month > 9) & (Month < 13) ~ "Winter"),
+         Weekday = factor(weekdays(`Start date`, abbreviate = FALSE),c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")),
+         Day = day(`Start date`),
+         Hour = hour(`Start date`),
+         # if needed in other format: Date = as.POSIXct(paste(Day,Month,Year,sep="-")))
+         Date = as.Date(`Start date`))
+
+capital_bikeshare = capital_bikeshare %>% filter(Date < "2021-11-01")
+```
+
+Next, we load a weather dataset for historical weather data from https://mesonet.agron.iastate.edu/request/download.phtml?network=VA_ASOS (the handbook can be found at https://www.weather.gov/media/asos/aum-toc.pdf).
+We choose the Ronald Reagan airport weather station to be a good location due to its proximity to the city centre. In the following analysis, we will assume that the weather in DC and the Ronald Reagan is the same to any given hour.
+
+```{r, results='hide',fig.keep='all'}
+weather_data = read_csv("/Users/tim_neumann/Desktop/Capital_Bikeshare/Hourly_Weather_Ronald_Reagan.csv")
+weather_data = weather_data %>%
+  rename("Date" = "valid",
+         "Temperature_F" = "tmpf",
+         "Relative_Humidity" = "relh",
+         "Windspeed_knots" = "sknt",
+         "Precipitation" = "p01i",
+         "Visibility_mi" = "vsby",
+         "present_weather" = "wxcodes")
+weather_data = weather_data %>% select(c(Date,Temperature_F,Relative_Humidity,Windspeed_knots,Precipitation,Visibility_mi,present_weather,feel))
+weather_data = weather_data %>% 
+  mutate(Year = year(weather_data$Date),
+         Month = month(weather_data$Date),
+         Day = day(weather_data$Date),
+         Hour = hour(weather_data$Date),
+         Date = as.Date(weather_data$Date,"%m/%d/%Y"))
+weather_data = weather_data %>% filter(Date > "2010-09-19")
+
+weather_data1 = weather_data %>%
+  group_by(Date) %>%
+  filter(!duplicated(Hour))
+```
+
+Then we join the capital_bikeshare and the weather dataset.
+
+```{r, results='hide',fig.keep='all'}
+capital_bikeshare1 = left_join(capital_bikeshare,weather_data1, by = c("Year","Month","Day","Date","Hour")) 
+capital_bikeshare1 = capital_bikeshare1 %>% select(Date, Hour, everything())
+```
+
+Finally we introduce a a ride count and recode some categorical variables again for a better handling of the data.
+
+
+```{r, results='hide',fig.keep='all'}
+capital_bikeshare = capital_bikeshare %>%
+  mutate(count = 1)
+```
+
+
+```{r, results='hide',fig.keep='all'}
+capital_bikeshare = capital_bikeshare %>%
+  mutate(Weekday=
+           recode(Weekday,
+                  "Monday"=1,
+                  "Tuesday"=2,
+                  "Wednesday"=3,
+                  "Thursday"=4,
+                  "Friday"=5,
+                  "Saturday"=6,
+                  "Sunday"=7),
+         Season=
+           recode(Season,
+                  "Spring"=1,
+                  "Summer"=2,
+                  "Fall"=3,
+                  "Winter"=4),
+          `Member type`=
+           recode(`Member type`,
+                  "Casual"=0,
+                  "Member"=1)) # there are 58 Unknowns in the data which introduce NAs
+```
+
+**FUN FACTS**
+
+The data set contains rides .025 % rides with a negative ride length, with the shortest ride being -1743833 seconds long.
+Some of the rides are on the other hand very long, with the longest ride taking more than than 38 years!
+
+Obviously, those entries result from errors in the data collection, and we filter them out. Explicitly, we filter out the very short rides (below 1 minute) and very long rides (more than one day). The resulting ride duration distribution can be seen below.
+
+```{r, results='hide',fig.keep='all'}
+capital_bikeshare = capital_bikeshare %>% filter(Duration >59) %>% filter(Duration<86400)
+capital_bikeshare %>% filter(Duration < 10000) %>% ggplot(aes(Duration)) + geom_histogram(binwidth = 10)
+```
+
+Now we filter by relevant variables.
+
+```{r}
+capital_bikeshare = capital_bikeshare %>%
+  select(Date,count,Weekday,Holiday,Month,Hour,Temperature_F,Relative_Humidity,Windspeed_knots,Precipitation,Visibility_mi,present_weather,feel,Season,Duration,`Start station`,`End station`,`Member type`,`Bike type`,`Start latitude`,`Start longitude`,`End latitude`,`End longitude`,Year,Day)
+capital_bikeshare
+```
+
+Additional to this comprehensive dataset capital_bikeshare it will be useful to have a tibble in which the bike rides are stored in a slightly different format (i.e. grouped by certain variables). Thus, we create a second tibble that contains the data grouped by Date and Hour. We want to avoid the missing entries from April 2020. As mentioned earlier, we focus on weather data in capital_bikeshare2 and calendar data in capital_bikeshare3, while we disregard the variables 'present weather', 'member' (there are only less than 2,000,000 entries which are not NAs), 'bike type' and 'start and end station' in those two new tibbles. We will keep those variables in capital_bikeshare for further analysis.
+
+## capital_bikeshare2
+
+Next, we create capital_bikeshare2 for the weather analysis.
+         
+```{r}
+capital_bikeshare2 = capital_bikeshare  %>%
+  filter(((Date < "2020-04-01") | (Date > "2020-04-30"))) %>%
+  group_by(Date,Hour) %>% 
+  summarise(count = sum(count),
+            Precipitation = suppressWarnings(mean(as.numeric(Precipitation))), # to prevent error messages due to missing data
+            Temperature_F = mean(Temperature_F),
+            Relative_Humidity = mean(Relative_Humidity),
+            Windspeed_knots = mean(Windspeed_knots),
+            Visibility_mi = mean(Visibility_mi),
+            feel = mean(feel),
+            Duration = mean(Duration))
+capital_bikeshare2
+```
+
+## capital_bikeshare3
+
+Now, we create capital_bikeshare3 for the calendaric analysis.
+
+```{r}
+capital_bikeshare3 = capital_bikeshare %>%
+  filter(((Date < "2020-04-01") | (Date > "2020-04-30"))) %>%
+  group_by(Date) %>% 
+  summarise(count = sum(count),
+            Weekday = mean(Weekday),
+            Holiday = mean(Holiday),
+            Month = mean(Month),
+            Season = mean(Season),
+            Duration = mean(Duration),
+            Year = mean(Year),
+            Day = mean(Day))
+```
+
+To add holiday data to our tibble, we load a holiday data set from https://www.kaggle.com/donnetew/us-holiday-dates-2004-2021?select=US+Holiday+Dates+%282004-2021%29.csv comprising 19 national holidays for every year.
+
+```{r}
+holidays = read_csv("/Users/tim_neumann/Desktop/Capital_Bikeshare/US Holiday Dates (2004-2021).csv")
+```
+
+With this, we can add a Holiday variable.
+
+```{r}
+capital_bikeshare3 = capital_bikeshare3 %>%
+  mutate(Holiday = case_when(
+                    Date %in% holidays$Date ~ 1,
+                    TRUE ~ 0))
+capital_bikeshare3
+```
+
+This concludes the data collection and preparation section at first. For convenience, this data can be exported in csv-format to avoid a repition of the above steps using the command write_csv() command.
+We can now start with the core data analyis.
+
+# Data Analysis
+## Modeling growth
+
+To get an idea of the growth of the company, we model the development of Capital Bikeshare usage over the last 11 years.
+Let's first visualize the relationship between Date and ride count with flexible lines of best fit.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare_growth = capital_bikeshare3 %>%
+  ggplot(aes(Date,count)) + geom_point() + scale_color_continuous(low='blue',high='red') + 
+   theme_bw() + geom_smooth() + labs(x = "Days", y = "Ride Count", title = "Capital Bikeshare growth by Day") + theme(plot.title = element_text(hjust = .5))
+
+capital_bikeshare_growth_hourly = capital_bikeshare2 %>%
+  ggplot(aes(Date,count)) + geom_point() + scale_color_continuous(low='blue',high='red') + 
+   theme_bw() + geom_smooth() + labs(x = "Hours", y = "Ride Count", title = "Capital Bikeshare growth by Hour") + theme(plot.title = element_text(hjust = .5))
+
+capital_bikeshare_growth_season = capital_bikeshare3 %>%
+  ggplot(aes(Date,count)) + geom_point(aes(color=capital_bikeshare3$Season)) + scale_color_continuous(low='darkblue',high='red',labels = c("Spring", "Summer", "Fall","Winter")) + 
+   theme_bw() + geom_smooth() + labs(x = "Day", y = "Ride Count", title = "Capital Bikeshare growth colored by Season", color = "Season") + theme(plot.title = element_text(hjust = .5))
+capital_bikeshare_growth + capital_bikeshare_growth_hourly
+capital_bikeshare_growth_season
+```
+We see that there is a long term growth in bike rides, which can also be seen in the individual years:
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+rides_date_given_year = capital_bikeshare %>%
+  group_by(Year,Date) %>%
+  summarise('Number of bike rides' = n())
+
+rides_date_given_year_plot = rides_date_given_year %>% # color= Weekday can be added
+  ggplot(aes(x = Date, y = `Number of bike rides`)) + geom_point()  +
+  geom_smooth(method="loess") +
+  facet_wrap(~Year,scales = "free_x")
+
+rides_date_given_year_plot
+```
+(The trough in April 2020 results from missing data for this month.)
+
+We now try to model this with a linear model.
+To obtain a reasonable intercept, we create the variable New_Date in order to find the number of bike rides on Day 0 (the first day for which data is available) according to the linear model of lm_robust.
+
+```{r}
+New_Date = capital_bikeshare3$Date-min(capital_bikeshare3$Date)
+growth  = lm_robust(capital_bikeshare3$count ~ New_Date)
+growth_model = tidy(growth)
+growth_model
+```
+At this point, a brief interpretation of the resulting model follows to exemplify the workings of the lm_robust() function. In future usage of the function, the results are then used based on the explanations given here.
+The lm_robust() function is a function calculating a linear model of an outcome variable in respect to control variables. In the case above, it creates a linear model of the ride count per day depending on the date variable New_Date, which comprises the difference of the respective day to the first day that data is available on (the calendaric increment is days). It utilizes a least squares approach to find the optimal linear fit for the data.
+In the first row, we find the Intercept. The estimate in the second column (5354) refers to the number of bike rides at day zero (technically, it resembles the outcome variable when the control variable is 0). The second row is concerned with how the variable New_Date (or in general the control variables) affect the outcome variable. We see that the estimate for New_Date is 1.048. While the estimate of Intercept can literally be understood as y-axis intercept, the estimate for the control variables is the slope of the linear model. This means, according to the linear fit, an increase by one unit in New_Date (one more day) increases the ride number per day by slightly more than 1. For example, the ride count after 10 days can be obtained by adding the Intercept estimate to the New_Date estimate multiplied with 10. The remaining columns describe how significant the estimates are. In this case, we find a very small p-value for the New_Date estimate and a high t-statistic number, offering a high level of confidence in the estimate. The confidence interval columns refer to the interval in which the estimate is expected in (by default) 95% of the cases.
+
+To visualize this linear model, we construct a new plot similar to the one above, but with a linear line of best fit.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare_growth_linear = capital_bikeshare3 %>%
+  ggplot(aes(Date,count)) + geom_point() + scale_color_continuous(low='blue',high='red') + 
+   theme_bw() + geom_smooth(method = lm) + labs(x = "Days", y = "Ride Count", title = "Capital Bikeshare growth by Day (Linear Model)") + theme(plot.title = element_text(hjust = .5))
+capital_bikeshare_growth_linear
+```
+Another measure to get an idea of a relation is the correlation coefficient.
+```{r}
+cor(capital_bikeshare3$Year,capital_bikeshare3$count)
+```
+In our example it is reasonably positive, suggesting a positive relationship between the variables.
+
+__Introducing a weight variable__
+
+In order to measure relationships between variables in the further analysis, the underlying growth in bike rides can mask some of the relations, e.g. between bike rides and weather. One approach to mitigate this effect is to construct a weight variable to normaluze the number of daily rides in relation to the general growth trend. We do this by applying a function including a weight given by the z-value of the count.
+
+```{r}
+standardize = function(x){
+  (x - mean(x, na.rm=T)) / sd(x, na.rm=T)
+}
+
+weight = standardize(capital_bikeshare3$count)
+weighted_count = c()
+
+for (i in c(1:(nrow(capital_bikeshare3)))){
+  weighted_count[i] = case_when(weight[i]>1 ~ capital_bikeshare3$count[i] / weight[i], 
+                               (abs(weight[i])<=1) & (weight[i]>0.5) ~ capital_bikeshare3$count[i] * weight[i],
+                               (abs(weight[i])<=1) & (weight[i]<=(-0.5)) ~ capital_bikeshare3$count[i] / abs(weight[i]),
+                                weight[i]<(-1) ~ capital_bikeshare3$count[i] * abs(weight[i]),
+                               TRUE ~ capital_bikeshare3$count[i])
+}
+```
+
+We have weight as a vector of weigths now, and weighted_count is the vector with the adjusted count of bike rides per day.
+
+Values in the early days of the company are increased while later values are decreased.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare3$count[1:10]
+weight[1:10]
+weighted_count[1:10]
+```
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare3$count[4016:4026]
+weight[4016:4026]
+weighted_count[4016:4026]
+```
+
+Let's compare the two distributions.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+par(mfrow=c(1,2))
+hist(capital_bikeshare3$count,main="Distribution of original count variable",
+        xlab="Ride count per day",
+        ylab="frequency of occurrence")
+hist(weighted_count,main="Distribution of weighted count variable",
+        xlab="Ride count per day",
+        ylab="frequency of occurrence")
+```
+We see that we were able to make the distribution more narrow to account for the overall growth of the company.
+
+Let's see how our linear regression model turns out now.
+```{r, echo = FALSE}
+growth_adjusted  = lm_robust(weighted_count ~ New_Date)
+growth_adj_model = tidy(growth_adjusted)
+growth_adj_model
+```
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare3 %>% mutate(weighted_count = weighted_count)
+capital_bikeshare_adjusted_growth_linear = capital_bikeshare3 %>%
+  ggplot(aes(Date,weighted_count)) + geom_point() + scale_color_continuous(low='blue',high='red') + 
+   theme_bw() + geom_smooth(method = lm) + labs(x = "Days", y = "Ride Count", title = "Capital Bikeshare growth by Day (Adjusted Linear Model)") + theme(plot.title = element_text(hjust = .5))
+capital_bikeshare_adjusted_growth_linear
+```
+
+As we can see in plot and regression table, we have been able to adjust our growth model in order to make the growth around 40% smaller. However, it is reasonable to state that the remaining issue of the structural non-linear nature of the companies growth poses a limitation to this approach.
+
+For further analysis, we could either use this approach and refer back to the weighted values, or we can focus on time intervals of a year to minimize the noise in the data due to long term growth (this is what we will do).
+
+We will now examine the effect of weather on the ride count in the years 2016, 2017 and 2018.
+
+## Relation between Weather data and Capital Bikeshare usage
+
+First, we create a correlation matrix to see how different variables relate to the ride count.
+
+```{r}
+correlation_matrix = cor(capital_bikeshare2[c(4,5,6,7,8,9)],capital_bikeshare2$count,use = "complete.obs")
+round(correlation_matrix, 3)
+```
+
+We find some interesting correlations in the count-column that we want to investigate further, such as the relation between precipitation, temperature/felt temperature or windspeed and the ride count.
+
+### Precipitation 
+
+At first, we show the distribution of bike rides per precipitation.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare_rain_summary = capital_bikeshare %>% 
+  group_by(Precipitation) %>% summarise("Bike rides" = n())
+capital_bikeshare_prec_plot = capital_bikeshare_rain_summary %>% 
+  ggplot(aes(x = Precipitation, y = `Bike rides`)) + geom_point() 
+
+capital_bikeshare_rain_summary
+capital_bikeshare_prec_plot
+```
+We find that there is a strong decline in bike rides as soon as precipitation sets in, which we would expect. To show the effect of increased precipitation for existing precipitation, i.e., including the case of no precipitation, we reduce the data by the first row and detect a hyperbolic behavior.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare_rain_plot = capital_bikeshare_rain_summary %>% filter((Precipitation > 0.01) & (Precipitation != "T")) %>%
+  ggplot(aes(x = Precipitation, y = `Bike rides`)) + geom_point() + theme(axis.text.x = element_text(angle = 90))
+
+capital_bikeshare_rain_plot2 = capital_bikeshare_rain_summary %>% filter((Precipitation > 0.01) & (Precipitation != "T") & (Precipitation < 0.3)) %>%
+  ggplot(aes(x = as.numeric(Precipitation), y = `Bike rides`)) + geom_point() + geom_smooth(method = "loess", formula = y ~ (1/x))
+
+capital_bikeshare_rain_plot / capital_bikeshare_rain_plot2
+```
+
+Here we detect a hyperbolic behavior.
+
+We know construct a linear model to see the relation between precipitation and ride count. Therefore, we introduce a factor (0 for no precipitation, 1 to 3 for low to heavy precipitation) and look at the models for years 2016, 2017 and 2018 (for which we assumed the change in ride counts in respect to overall growth to be relatively small).
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare2 = capital_bikeshare2 %>% mutate(Year = year(Date))
+
+capital_bikeshare2016 = capital_bikeshare2 %>% filter(Year == 2016) 
+capital_bikeshare2017 = capital_bikeshare2 %>% filter(Year == 2017) 
+capital_bikeshare2018 = capital_bikeshare2 %>% filter(Year == 2018) 
+
+Precipitation_scale = case_when(capital_bikeshare2016$Precipitation == 0 ~ 0,
+                                        between(as.numeric(capital_bikeshare2016$Precipitation),0.0001,0.1) == TRUE ~ 1,
+                                        between(as.numeric(capital_bikeshare2016$Precipitation),0.1001,0.2) == TRUE ~ 2,
+                                        capital_bikeshare2016$Precipitation > 0.2 ~ 3,
+                                        TRUE ~ mean(capital_bikeshare2016$Precipitation,na.rm = T))
+                                        
+prec2016 = tidy(lm_robust(capital_bikeshare2016$count ~ Precipitation_scale))
+
+Precipitation_scale = case_when(capital_bikeshare2017$Precipitation == 0 ~ 0,
+                                        between(as.numeric(capital_bikeshare2017$Precipitation),0.0001,0.1) == TRUE ~ 1,
+                                        between(as.numeric(capital_bikeshare2017$Precipitation),0.1001,0.2) == TRUE ~ 2,
+                                        capital_bikeshare2017$Precipitation > 0.2 ~ 3,
+                                        TRUE ~ mean(capital_bikeshare2017$Precipitation,na.rm = T))
+                                        
+prec2017 = tidy(lm_robust(capital_bikeshare2017$count ~ Precipitation_scale))
+
+Precipitation_scale = case_when(capital_bikeshare2018$Precipitation == 0 ~ 0,
+                                        between(as.numeric(capital_bikeshare2018$Precipitation),0.0001,0.1) == TRUE ~ 1,
+                                        between(as.numeric(capital_bikeshare2018$Precipitation),0.1001,0.2) == TRUE ~ 2,
+                                        capital_bikeshare2018$Precipitation > 0.2 ~ 3,
+                                        TRUE ~ mean(capital_bikeshare2018$Precipitation,na.rm = T))
+                                        
+prec2018 = tidy(lm_robust(capital_bikeshare2018$count ~ Precipitation_scale))
+
+Precipitation_plot = capital_bikeshare2018 %>%
+  ggplot(aes(x = Precipitation_scale )) +  geom_bar(width = .3) + labs(x = "Precipitation from low to high", y = "Number of occurrences")
+Precipitation_plot
+```
+
+```{r}
+prec2016
+prec2017
+prec2018
+```
+
+The models all reveal the same result: There is a drastic decline in ride count when precipitation increases to a value greater than zero. The decline of (on average) 235 rides per hour could be impacted by the very low sample size for high precipitation. However, the three tables are data-based evidence for something we would have expected to see: People ride less bikes when it starts to rain.
+
+### Temperature
+
+Let's next look at how temperature impacts the ride count.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare_temp_summary = capital_bikeshare %>% 
+  group_by(Temperature_F) %>% summarise("Bike rides" = n())
+
+capital_bikeshare_temp_plot = capital_bikeshare_temp_summary %>% 
+  ggplot(aes(x = Temperature_F, y = `Bike rides`)) + geom_point() + geom_smooth(method="loess") + labs(x = "Temperature in degress Fahrenheit")
+
+capital_bikeshare_temp_plot
+```
+There is an increase in ride numbers when temperatures are increasing up to a certain point, from where on the numbers start to decrease.
+
+Our weather data set was equipped with another interesting variable - the felt temperature.
+We find a similar pattern for it:
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+feel_plot = capital_bikeshare2 %>%
+  ggplot(aes(x = feel, y= count )) +  geom_point() + geom_smooth()
+feel_plot
+```
+
+We can also visualize the relation of temperature and ride count per year.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare2 = capital_bikeshare2 %>% mutate(Month = month(Date))
+
+capital_bikeshare_temp_plot2 = capital_bikeshare2 %>%
+  ggplot(aes(Temperature_F,count),color=Month) + geom_point() + theme_bw() + geom_smooth() + facet_wrap(~Year)
+capital_bikeshare_temp_plot2
+```
+An increase in ride numbers with increasing temperatures, but only up to a certain tipping point, from where on the number of hourly bike rides per temperature decreases again.
+Nonetheless, we can try to model the pattern with a linear model...
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare2016$New_Temperature = capital_bikeshare2016$Temperature_F - min(capital_bikeshare2016$Temperature_F,na.rm = T)
+capital_bikeshare2017$New_Temperature = capital_bikeshare2017$Temperature_F - min(capital_bikeshare2017$Temperature_F,na.rm = T)
+capital_bikeshare2018$New_Temperature = capital_bikeshare2018$Temperature_F - min(capital_bikeshare2018$Temperature_F,na.rm = T)
+
+temp2016 = tidy(lm_robust(count ~ New_Temperature, capital_bikeshare2016))
+temp2017 = tidy(lm_robust(count ~ New_Temperature, capital_bikeshare2017))
+temp2018 = tidy(lm_robust(count ~ New_Temperature, capital_bikeshare2018))
+```
+
+
+```{r}
+temp2016
+temp2017
+temp2018
+```
+
+... and find that the intercept of the control variable (the temperature above the minimal temperature in the dataset) has a positive intercept. (The negative y-intercept results from the fact that the linear model does not resemble the true nature of the distribution paired with the high amount of different categories within the control variable.) This confirms our observation that - broadly speaking - the ride count increases with rising temperatures.
+
+### Visibility (in miles)
+
+The visibility in miles can also affect the ride count, with greater visibility correlating with higher ride numbers.
+
+```{r}
+vis_plot = capital_bikeshare2 %>% filter(Visibility_mi>=0) %>%
+  ggplot(aes(x = Visibility_mi, y= count )) +  geom_point()
+vis_plot
+```
+
+### Windspeed (in knots)
+
+Lastly, we look at windspeed in relation to the ride count.
+
+```{r, results='hide',fig.keep='all'}
+windspeed_plot = capital_bikeshare2 %>%
+  ggplot(aes(x = Windspeed_knots, y= count )) +  geom_point() + labs(x = "Windspeed in miles")
+
+capital_bikeshare_wind_summary = capital_bikeshare %>% 
+  group_by(Windspeed_knots) %>% summarise("Bike rides" = n())
+
+capital_bikeshare_wind_plot = capital_bikeshare_wind_summary %>% 
+  ggplot(aes(x = Windspeed_knots, y = `Bike rides`)) + geom_point() + geom_smooth(method="loess") + labs(x = "Windspeed in miles") +
+          geom_vline(xintercept = mean(capital_bikeshare2016$Windspeed_knots,na.rm = T), linetype="dotted", color = "red", size=1.5) + annotate("text", x=mean(capital_bikeshare2016$Windspeed_knots,na.rm = T), y=-1000, size = 3, label= as.character(signif(mean(capital_bikeshare2016$Windspeed_knots,na.rm = T),3)))
+
+windspeed_plot / capital_bikeshare_wind_plot
+```
+We see that the data has a typical inverse-u shape, in which the bike ride count only significantly decreases with reasonably high windspeeds. It is interesting that most rides were conducted when the windspeed was bot zero, indeed, the mode is also in the interval of a windspeed between 5 and 10 miles per hour. (The application of a linear model would thus not be insightful.)
+
+## Relation between calendaric data and Capital Bikeshare usage
+
+In this section, we look at calendaric data and relations to the ridership behavior.
+
+### The impact of COVID
+
+It is worth to take a look at the influence of COVID-19 on ride behavior. Therefore, we introduce a COVID variable indicator 0 or 1 depending on the date. According to https://www.dcpolicycenter.org/publications/covid-19-timeline/, Wed 11 March 2020 was the date mayor Bowser declared a public health emergency in DC. 
+
+```{r}
+Covid = case_when(capital_bikeshare2$Date > "2020-03-11" ~ 1,
+                  TRUE ~ 0)
+```
+
+We then use the variable as control variable in a model.
+
+```{r}
+covid  = tidy(lm(capital_bikeshare2$count ~ Covid))
+covid
+```
+The pandemic is evidently correlating with lower numbers of bike rides. While on average 322 bike rides were made before COVID per hour, the pandemic decreased this number significantly by on average 60 bike rides per hour. 
+The average ride counts pre- and post-pandemic are summarised below.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare2 %>% mutate(Covid = Covid) %>% group_by(Covid) %>% summarise(mean = mean(count))
+```
+To visualize this, we show yet another growth model comprising another fit function (utilizing the method 'loess') that makes the decline clear.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare_growth_hourly_covid = capital_bikeshare3 %>%
+  ggplot(aes(Date,count)) + geom_point() + scale_color_continuous(low='blue',high='red') + 
+   theme_bw() + geom_smooth(method = "loess") + labs(x = "Days", y = "Ride Count", title = "Capital Bikeshare growth by Day") + theme(plot.title = element_text(hjust = .5))
+
+capital_bikeshare_growth_hourly_covid
+```
+As we can see by this model, there is a tipping point in late 2017. This might be explained by the sharp decline in ridership through COVID, but with COVID starting to spread rapidly in early 2020, it is reasonable to assume that there might be a decline in the ride share numbers irrespective of COVID underlying this trend. Additionally, it should be considered that for April 2020 there is no available data. Nonetheless, it can be stated that the pandemic caused a decline in ridership (if we let the pandemic start after April, the decline is almost as steep as in the model above).
+
+Next, we investigate how holidays impact the ride count.
+
+### Holidays
+
+To see the influence of holidays on the ride count, we create linear models for the years 2016, 2017 and 2018.
+
+```{r,echo=FALSE}
+capital_bikeshare2016 = capital_bikeshare3 %>% filter(Year == 2016) 
+capital_bikeshare2017 = capital_bikeshare3 %>% filter(Year == 2017) 
+capital_bikeshare2018 = capital_bikeshare3 %>% filter(Year == 2018) 
+
+holiday2016 = lm_robust(count ~ Holiday, capital_bikeshare2016)
+holiday2016 = tidy(holiday2016)
+holiday2016
+
+holiday2017 = tidy(lm_robust(count ~ Holiday, capital_bikeshare2017))
+holiday2017
+
+holiday2018 = tidy(lm_robust(count ~ Holiday, capital_bikeshare2016))
+holiday2018
+```
+
+A holiday decreases the number of bike rides, as the Holiday estimate for all three years shows. This could have several explanations - we will come back to it later.
+
+Before that, we contemplate the rides per season, months and hour:
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+capital_bikeshare_season = capital_bikeshare3 %>%
+    ggplot(aes(Season,count)) + geom_boxplot(aes(color=factor(Season))) + theme_bw() 
+
+rides_per_month = capital_bikeshare %>%
+  group_by(Month) %>%
+  summarise('Number of bike rides' = n())
+rides_per_month_plot = rides_per_month %>%
+  ggplot(aes(x = Month, y= `Number of bike rides`)) + geom_col() + 
+  scale_x_continuous(breaks = seq(1,12),labels = c("January","February","March","April","Mai","June","July","August","September","October","November","December")) 
+
+capital_bikeshare_hour = capital_bikeshare2 %>%
+  ggplot(aes(Hour,count)) + geom_point() + theme_bw() + geom_smooth() 
+
+capital_bikeshare_season 
+rides_per_month_plot
+capital_bikeshare_hour
+```
+As we can see, the majority of rides is made in Summer and Fall (June to October), and rides are mostly started in the time from 11 am to 8 pm.
+
+The next graphs show the bike rides per weekday with a color component for the month of the year...
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+rides_weekday_given_month = capital_bikeshare %>%
+  group_by(Month,Weekday) %>%
+  summarise('Number of bike rides' = n())
+
+rides_weekday_given_month_plot = rides_weekday_given_month %>%
+  ggplot(aes(x = Weekday, y= `Number of bike rides` )) +  geom_bar(aes(fill = Month), position = "dodge",stat = "identity" ) + scale_x_continuous(breaks = seq(1,7),labels = c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"))
+
+rides_weekday_given_month_plot
+```
+... and this one  the rides per weekday over the years.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+rides_weekday_given_year = capital_bikeshare %>%
+  group_by(Year,Weekday) %>%
+  summarise('Number of bike rides' = n())
+
+rides_weekday_given_year_plot = rides_weekday_given_year %>% 
+  ggplot(aes(x = Weekday, y= `Number of bike rides`)) + geom_point()  + geom_line() +
+  scale_x_continuous(breaks = seq(1,7),labels = c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")) +
+  facet_wrap(~Year,scales = "free_x") + theme(axis.text.x = element_text(angle = 45))
+
+rides_weekday_given_year_plot
+```
+Both reveal that the distribution of ride over the seven weekdays is more or less constant, with some spikes in usage on Saturdays.
+
+### Membership at Capital Bikeshare
+
+The next section is concerned with data on membership. Capital Bikeshare offers its services to everyone, but there are different payment plans for members and non-members. To analyze differences between the groups, we create two new tibbles.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+membership = capital_bikeshare  %>%
+  filter(((Date < "2020-04-01") | (Date > "2020-04-30"))) %>%
+  filter(`Member type`==1) %>% 
+  group_by(Date) %>%
+  summarise(count = sum(count),
+            Weekday = mean(Weekday),
+            Holiday = mean(Holiday),
+            Duration = mean(Duration),
+            Year = mean(Year))
+
+membership = membership %>% mutate(weekend = case_when(membership$Weekday %in% c(1,2,3,4,5) ~ 0,TRUE ~ 1))
+membership
+
+non_membership = capital_bikeshare  %>%
+  filter(((Date < "2020-04-01") | (Date > "2020-04-30"))) %>%
+  filter(`Member type`==0) %>% 
+  group_by(Date) %>%
+  summarise(count = sum(count),
+            Weekday = mean(Weekday),
+            Holiday = mean(Holiday),
+            Duration = mean(Duration),
+            Year = mean(Year))
+non_membership = non_membership %>% mutate(weekend = case_when(non_membership$Weekday %in% c(1,2,3,4,5) ~ 0,TRUE ~ 1))
+
+non_membership
+```
+
+Next we compare the number of users with membership subscription and without.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+membership_rides_total  = capital_bikeshare %>% group_by(`Member type`) %>% summarise(n=n())
+membership_rides_total
+membership_rides_total_plot = membership_rides_total %>% ggplot(aes(x = `Member type`,y = n)) + geom_col(fill = "rosybrown") + scale_x_continuous(breaks = c(0.0,1.0),labels = c("No member","Member")) + scale_y_continuous(breaks = c(0,5000000,10000000,15000000,20000000,25000000),labels = c("0","5","10","15","20","25") ) + labs(title = "Total rides by member group", y ="Total rides (in million", x= "Member Group") + theme(plot.title = element_text(hjust = .5))
+membership_rides_total_plot
+```
+The number of rides made by members exceeds this of non-members significantly, with members accounting for more than 23 million rides, whereas the ride count of nonn-members sums up to less than 7 million rides.
+
+It is also interesting to see the number of different bike types utilized.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+biketype  = capital_bikeshare %>% group_by(`Bike type`) %>% filter(!is.na(`Bike type`)) %>% summarise(n=n())
+biketype
+biketype_plot = biketype %>% ggplot(aes(x = `Bike type`,y = n)) + geom_col(fill = "brown4")  + labs(title = "Rides per bike type", y ="Amount of rides", x= "Member Group") + theme(plot.title = element_text(hjust = .5))
+biketype_plot
+```
+Apparently, the majority of used bikes were classic bikes, closely followed ny docked bikes.
+
+Now combine the two to see how many bikes per type were used by the two membership groups.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+member_biketype = capital_bikeshare %>% group_by(`Member type`,`Bike type`) %>%  filter(!is.na(`Bike type`)) %>%  filter(!is.na(`Member type`)) %>% summarise(rides = n())
+member_biketype_plot  = member_biketype %>% ggplot(aes(x = `Member type`,y = rides)) + geom_bar(aes(fill = `Bike type`), position = "dodge",stat = "identity" ) + scale_x_continuous(breaks = c(0.0,1.0),labels = c("No member","Member")) + labs(title = "Rides per bike type", y ="Amount of rides", x= "Member Group") + theme(plot.title = element_text(hjust = .5))
+member_biketype
+member_biketype_plot
+```
+To get the relative distribution of bike types per member group, we construct another plot.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+member_biketype_pct = capital_bikeshare %>% group_by(`Member type`,`Bike type`) %>%  filter(!is.na(`Bike type`)) %>%  filter(!is.na(`Member type`)) %>% summarise(rides = n()) %>% group_by(`Member type`) %>% mutate(pct = rides/sum(rides))
+member_biketype_plot  = member_biketype %>% ggplot(aes(x = `Member type`,y = member_biketype_pct$pct)) + geom_bar(aes(fill = `Bike type`), position = "dodge",stat = "identity" ) + scale_x_continuous(breaks = c(0.0,1.0),labels = c("No member","Member")) + labs(title = "Rides per bike type", y ="Amount of rides", x= "Member Group") + theme(plot.title = element_text(hjust = .5))
+member_biketype_pct
+member_biketype_plot
+```
+This distribution does not change the relation within the group (intra), but between the groups (inter). It can be stated that the relative usage of electrice bikes is approximately the same in both groups, but that non-members use docked bikes more frequently. whereas members use classic bikes more frequently (relative to their respective total usage).
+
+Another interesting metric is the ride duration by member group.
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+member_ride_duration = capital_bikeshare %>% group_by(`Member type`) %>% summarise(mean_ride = mean(Duration))
+member_ride_duration_plot = member_ride_duration %>% ggplot(aes(x = `Member type`,y = mean_ride)) + geom_col(fill = "rosybrown") + scale_x_continuous(breaks = c(0.0,1.0),labels = c("No member","Member")) + labs(title = "Comparison of ride length between non-members and members", y ="Average ride duration", x= "Member Group") + theme(plot.title = element_text(hjust = .5))
+member_ride_duration
+member_ride_duration_plot
+```
+It is evident that non-members went on longer bike rides, on average.
+
+To conclude the section, we come back to a result we found earlier: that less rides are made on holidays. We want to reconsider this result in contemplation of the different user groups and answer the question:
+How do the different membership groups behave on holidays and weekends?
+
+We start with the holidays:
+
+```{r}
+member_holiday_model  = tidy(lm(count ~ Holiday, membership))
+nonmember_holiday_model  = tidy(lm(count ~ Holiday, non_membership))
+member_holiday_model
+nonmember_holiday_model
+```
+
+By looking at the Holiday estimates, we can clearly see a trend: The number of bike rides increases on holidays for non-members, while it decreases for members. This is an interesting observation that could be explained by the fact that holidays attract more tourists and non-residents to the nation's capital (tourists are likely to not have a membership), so that the number of bike rides for this group increases. Members however (we can assume that members are more likely to be residents of the D.C. area) might not use holidays that frequently to explore the city. In any case, the diametrically opposing trends in the numbers are remarkable, and we see that a more profound structure is hiding behind the initial observation that the number of rides decreases on holidays (this observation is by no means wrong: As there are more rides made by members, the impact of their behavior on the overall trend is stronger). Lastly, we can also look at the ridership behaviors on weekends vs. weekdays per member group.
+
+```{r}
+member_weekday_model  = tidy(lm(count ~ weekend, membership))
+nonmember_weekday_model  = tidy(lm(count ~ weekend, non_membership))
+
+member_weekday_model
+nonmember_weekday_model
+```
+
+We see that members and non-members again behave completely opposite. Members are riding less bikes on weekends (negative slope), while for non-members the ride count increases on weekends (positive slope). This is coherent with our analysis of rides per group on holidays.
+
+## Frequently used stations
+
+Lastly, we want to look which stations are most popular and plot the routes that were most frequently taken over the last 11 years.
+(Missing values in start and end station may result from undocked bikes, so we filter them out and only contemplate docked bikes.)
+
+The ten most popular start stations are ...
+
+```{r, echo = FALSE}
+popular_startstations = table(capital_bikeshare$`Start station`) %>% sort(decreasing = TRUE) %>% names
+top10start = popular_startstations[1:10]
+top10start
+```
+
+And the ten most popular end stations are ...
+
+```{r, echo = FALSE}
+popular_endstations = table(capital_bikeshare$`End station`) %>% sort(decreasing = TRUE) %>% names
+top10end = popular_endstations[1:10]
+top10end
+```
+
+Let's now look at the ten most popular routes:
+
+```{r, echo = FALSE}
+capital_bikeshare = capital_bikeshare %>% filter(!(is.na(`Start station`)))
+capital_bikeshare = capital_bikeshare %>% filter(!(is.na(`End station`)))
+
+route = paste(capital_bikeshare$`Start station`,capital_bikeshare$`End station`,sep = " TO ")
+popular_route = table(route) %>% sort(decreasing = TRUE) %>% names
+route_count = table(route) %>% sort(decreasing = TRUE)
+top10route = route_count[1:10]
+top10route
+```
+
+We want to create a D.C. map with those Capital Bikeshare routes. We search for them in the file manually by filtering for the station of interest. 
+
+```{r, echo = FALSE}
+geo_start = tibble(.rows = 10) 
+geo_end = tibble(.rows = 10) 
+
+geo_start = geo_start %>% mutate(name = c("Jefferson Dr & 14th St SW","Smithsonian-National Mall / Jefferson Dr & 12th St SW","Lincoln Memorial","Jefferson Dr & 14th St SW","Lincoln Memorial","Lincoln Memorial","Eastern Market Metro / Pennsylvania Ave & 7th St SE","Lincoln Park / 13th & East Capitol St NE","Columbus Circle / Union Station","Ohio Dr & West Basin Dr SW / MLK & FDR Memorials"),
+                      start_lon = c(-77.03243,-77.02858,-77.04943,-77.03243,-77.04943,-77.04943,-76.9954,-76.98835,-77.00493,-77.04657),
+                      start_lat = c(38.88855,38.88877,38.88825,38.88855,38.88825,38.88825,38.884,38.89046,38.89696,38.88412))
+
+geo_end = geo_end %>% mutate(name = c("Jefferson Dr & 14th St SW","Smithsonian-National Mall / Jefferson Dr & 12th St SW","Jefferson Memorial","Lincoln Memorial","Jefferson Dr & 14th St SW ","Lincoln Memorial","Lincoln Park / 13th & East Capitol St NE ","Eastern Market Metro / Pennsylvania Ave & 7th St SE","8th & F St NE ","Ohio Dr & West Basin Dr SW / MLK & FDR Memorials"),
+                      end_lon = c(-77.03243,-77.02858,-77.03741,-77.04943,-77.03243,-77.04943,-76.98835,-76.9954,-76.99475,-77.04657),
+                      end_lat = c(38.88855,38.88877,38.87982,38.88825,38.88855,38.88825,38.89046,38.884,38.89727,38.88412))
+geo_start
+geo_end
+```
+
+With the coordinates of start and end stations of the most popular routes, we can create the map. 
+
+```{r, echo = FALSE, results='hide',fig.keep='all'}
+# define box
+sbbox = make_bbox(lon = c(-77.05, -76.986), lat = c(38.875, 38.902), f = .1)
+
+# get map
+dc = get_map(location=sbbox, zoom=14 , maptype="satellite")
+
+map = ggmap(dc)
+# display map
+
+map +
+  
+  geom_label(data = geo_start,mapping = aes(x = geo_start$start_lon[2] ,   
+                          y = geo_start$start_lat[2],
+                          label = "2"),
+            size = 2, color = "grey20", fill = "green",
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25)  +     ###### 2
+
+  geom_point(data = geo_start, mapping = aes(x = start_lon[3], y = start_lat[3]), 
+               color = "blue") +
+  geom_point(data = geo_end, mapping = aes(x = end_lon[3], y = end_lat[3]), 
+               color = "red") +
+  geom_segment(aes(x=geo_start$start_lon[3],y=geo_start$start_lat[3],xend=geo_end$end_lon[3],yend=geo_end$end_lat[3])) +
+  geom_label(data = geo_start,mapping = aes(x = -77.0435 ,   
+                          y = 38.88384,
+                          label = "3"),
+            size = 2, color = "gray20", 
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25)  +      ###### 3
+
+  geom_point(data = geo_start, mapping = aes(x = start_lon[4], y = start_lat[4]), 
+               color = "blue") +
+  geom_point(data = geo_end, mapping = aes(x = end_lon[4], y = end_lat[4]), 
+               color = "red") +
+  geom_segment(aes(x=geo_start$start_lon[4],y=geo_start$start_lat[4],xend=geo_end$end_lon[4],yend=geo_end$end_lat[4])) +
+  geom_label(data = geo_start,mapping = aes(x = -77.0395,   
+                          y = 38.88745,
+                          label = "4"),
+            size = 2, color = "gray20", 
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25) +       ###### 4
+  geom_label(data = geo_start,mapping = aes(x = -77.0395,   
+                          y = 38.8895,
+                          label = "5"),
+            size = 2, color = "gray20", 
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25)    +    ###### 5
+   geom_label(data = geo_start,mapping = aes(x = geo_start$start_lon[6] ,   
+                          y = geo_start$start_lat[6],
+                          label = "6"),
+            size = 2,color = "grey20", fill = "green", 
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25)  +    ###### 6
+  
+  geom_point(data = geo_start, mapping = aes(x = start_lon[7], y = start_lat[7]), 
+               color = "blue") +
+  geom_point(data = geo_end, mapping = aes(x = end_lon[7], y = end_lat[7]), 
+               color = "red") +
+  geom_segment(aes(x=geo_start$start_lon[7],y=geo_start$start_lat[7],xend=geo_end$end_lon[7],yend=geo_end$end_lat[7])) +
+  geom_label(data = geo_start,mapping = aes(x = -76.98979,   
+                          y = 38.8871,
+                          label = "7"),
+            size = 2, color = "gray20", 
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25)  +      ###### 7
+   geom_label(data = geo_start,mapping = aes(x = -76.9935,   
+                          y = 38.8884,
+                          label = "8"),
+            size = 2, color = "gray20", 
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25) +       ###### 8
+
+   geom_point(data = geo_start, mapping = aes(x = start_lon[9], y = start_lat[9]), 
+               color = "blue") +
+  geom_point(data = geo_end, mapping = aes(x = end_lon[9], y = end_lat[9]), 
+               color = "red") +
+  geom_segment(aes(x=geo_start$start_lon[9],y=geo_start$start_lat[9],xend=geo_end$end_lon[9],yend=geo_end$end_lat[9])) +
+  geom_label(data = geo_start,mapping = aes(x = -77,   
+                          y = 38.8984,
+                          label = "9"),
+            size = 2, color = "gray20", 
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25) +      ###### 9
+  
+  geom_label(data = geo_start,mapping = aes(x = geo_start$start_lon[10] ,   
+                          y = geo_start$start_lat[10],
+                          label = "10"),
+            size = 2,color = "grey20", fill = "green", 
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25) +      ###### 10
+  geom_label(data = geo_start,mapping = aes(x = geo_start$start_lon[1] ,   
+                          y = geo_start$start_lat[1],
+                          label = "1"),
+            size = 2,color = "grey20", fill = "green", 
+            fontface = "bold", 
+            check_overlap = T,
+            label.size = 0.25)     ###### 1
+  
+```
+
+*Reference: We use ggmap() for this:  D. Kahle and H. Wickham. ggmap: Spatial Visualization with ggplot2. The R Journal, 5(1), 144-161. URL http://journal.r-project.org/archive/2013-1/kahle-wickham.pdf*
+
+Note that green labels resemble circular routes, where start and end station are identical. Blue points mark start stations and red points mark end stations of routes that have distinct start and end stations. As expected, most of the routes are centered around the area of the National Mall including Washington Monument, Lincoln Memorial and Tidal Basin.
+
+# Conclusion
+
+Throughout the analysis, we have found some interesting relationships between weather data, calendaric data (and COVID) and membership data and the number of rides with Capital Bikeshare. This analysis can serve as a basis to understand which variables impact ridership behavior in different groups, and could be extended to more involved projects such as predicting the ride number per day given weather forecasts and other relevant data sources identified above.
+
+
+
+
