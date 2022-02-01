@@ -1,6 +1,6 @@
 - 👋 Hi, I’m @timneumann1
-- 👀 I’m interested in Data Science and Machine Learning to solve real-world problems.
-- 🌱 I’m currently learning studying Data Science and Applied Mathematics.
+- 👀 I’m interested in Data Science and Machine Learning and want to research how it can contribute to solve some of the most urgent problems of our time.
+- 🌱 I’m currently studying Data Science and Applied Mathematics.
 - 📫 How to reach me: On LinkedIn via www.linkedin.com/in/timneumann01
 
 
