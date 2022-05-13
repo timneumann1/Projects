@@ -1,6 +1,6 @@
 - 👋 Hi, I’m @timneumann1
-- 👀 I’m interested in Data Science and Machine Learning and want to research how it can contribute to solve some of the most urgent problems of our time.
-- 🌱 I’m currently studying Data Science and Applied Mathematics.
+- 🌱 I’m currently studying Applied Mathematics, Data Science and Computer Science at The George Washington University.
+- 👀 I’m interested in the mathematical foundations of Data Science and Machine Learning and want to research how my field of study can contribute to solve some of the most challenging problems of our time.
 - 📫 How to reach me: On LinkedIn via www.linkedin.com/in/timneumann01
 
 
